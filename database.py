@@ -168,8 +168,8 @@ async def create_notification(event_id: int, notification_time: datetime) -> int
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
-            INSERT INTO notifications (event_id, notification_time)
-            VALUES ($1, $2)
+            INSERT INTO notifications (event_id, notification_time, sent)
+            VALUES ($1, $2, FALSE)
             RETURNING id
         """, event_id, notification_time)
         return row['id']
