@@ -47,7 +47,10 @@ async def check_and_send_notifications(bot: Bot):
             now = datetime.now(timezone)
             check_time = now + timedelta(minutes=2)
             
-            stmt = select(Notification).join(CalendarEvent).where(
+            stmt = select(Notification).join(
+                CalendarEvent, 
+                Notification.event_id == CalendarEvent.id
+            ).where(
                 and_(
                     Notification.sent == False,
                     Notification.notification_time <= check_time,

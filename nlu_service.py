@@ -16,10 +16,12 @@ class NLUService:
     
     def __init__(self):
         genai.configure(api_key=Config.GEMINI_API_KEY)
+        # Используем gemini-pro, который поддерживается стабильной версией API
+        # gemini-1.5-flash требует обновления библиотеки или использования другого API endpoint
         self.model = genai.GenerativeModel(
-            'gemini-1.5-flash',
+            'gemini-pro',
             generation_config={
-                "response_mime_type": "application/json",  # Включаем JSON режим
+                "response_mime_type": "application/json",
                 "temperature": 0.3
             }
         )
