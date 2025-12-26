@@ -1,7 +1,7 @@
 """Сервис обработки естественного языка для извлечения данных о событиях"""
 import google.generativeai as genai
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from config import Config
 import json
 import logging
@@ -88,15 +88,23 @@ class NLUService:
         """Создание промпта для Gemini"""
         current_datetime = self._get_current_datetime()
         current_date_str = current_datetime.strftime("%Y-%m-%d %H:%M:%S")
+        current_date_only = current_datetime.strftime("%Y-%m-%d")
         weekday_name = current_datetime.strftime("%A")  # День недели для контекста
         
-        prompt = f"""Ты — помощник для управления календарем. Твоя задача — извлечь из текста пользователя детали события и вернуть их в формате JSON.
+        prompt = f"""Ты — помощник для управления календарем. Твоя задача — извлечь из текста пользователя детали событий и вернуть их в формате JSON.
 
 Текущая дата и время: {current_date_str} ({weekday_name}, часовой пояс: {Config.TIMEZONE})
+Сегодня: {current_date_only}
 
 Текст пользователя: "{text}"
 
+ВАЖНО: Если пользователь просит создать несколько событий (например, "2 задачи", "несколько событий", перечисляет несколько задач), верни МАССИВ событий.
+
 Верни строго JSON со следующей структурой:
+- Если одно событие: объект {{"action": "create_event", "summary": "...", "start_datetime": "...", "duration_minutes": 60, "description": null}}
+- Если несколько событий: массив [{{"action": "create_event", "summary": "...", ...}}, {{"action": "create_event", "summary": "...", ...}}]
+
+Структура одного события:
 {{
     "action": "create_event" | "delete_event" | "update_event",
     "summary": "Название события",
@@ -106,18 +114,21 @@ class NLUService:
 }}
 
 Правила:
-1. Если пользователь говорит "завтра", "послезавтра", "через 3 дня" — вычисли правильную дату относительно текущей даты ({current_date_str})
-2. Если указано время без даты (например, "в 3 часа дня"), используй сегодняшнюю дату, если событие еще не прошло, иначе завтрашнюю
-3. Если время не указано, используй 12:00 по умолчанию
-4. Если длительность не указана, используй 60 минут по умолчанию
-5. Если пользователь просит удалить или изменить событие, укажи action соответственно
-6. Если пользователь передумал внутри фразы (например, "на завтра, ой нет, на послезавтра"), бери последнее утверждение
-7. Всегда возвращай валидный JSON, без дополнительного текста или комментариев
+1. Если пользователь говорит "сегодня", используй текущую дату ({current_date_only})
+2. Если пользователь говорит "завтра", "послезавтра", "через 3 дня" — вычисли правильную дату относительно текущей даты ({current_date_str})
+3. Если указано время без даты (например, "в 3 часа дня"), используй сегодняшнюю дату, если событие еще не прошло, иначе завтрашнюю
+4. Если время не указано, используй 12:00 по умолчанию
+5. Если длительность не указана, используй 60 минут по умолчанию
+6. Если пользователь просит удалить или изменить событие, укажи action соответственно
+7. Если пользователь передумал внутри фразы (например, "на завтра, ой нет, на послезавтра"), бери последнее утверждение
+8. Если пользователь просит создать несколько событий, извлеки ВСЕ события и верни их в массиве
+9. Всегда возвращай валидный JSON, без дополнительного текста или комментариев
 
 Примеры:
 - "Поставь встречу с клиентом на завтра в 15:00" -> {{"action": "create_event", "summary": "Встреча с клиентом", "start_datetime": "2025-01-15 15:00:00", "duration_minutes": 60, "description": null}}
+- "Поставь задачу на сегодня в 18:00" -> {{"action": "create_event", "summary": "Задача", "start_datetime": "{current_date_only} 18:00:00", "duration_minutes": 60, "description": null}}
+- "Поставь мне задачу на 28 декабря 2 штуки значит 1 с 13 до 16 уборка дома с 16 до 20 поход в магазин" -> [{{"action": "create_event", "summary": "Уборка дома", "start_datetime": "2025-12-28 13:00:00", "duration_minutes": 180, "description": null}}, {{"action": "create_event", "summary": "Поход в магазин", "start_datetime": "2025-12-28 16:00:00", "duration_minutes": 240, "description": null}}]
 - "Созвон с командой послезавтра в 10 утра на час" -> {{"action": "create_event", "summary": "Созвон с командой", "start_datetime": "2025-01-16 10:00:00", "duration_minutes": 60, "description": null}}
-- "Напомни мне про презентацию через 2 дня в 14:30" -> {{"action": "create_event", "summary": "Презентация", "start_datetime": "2025-01-16 14:30:00", "duration_minutes": 60, "description": null}}
 - "Тренировка в пятницу в 6 вечера на полтора часа" -> {{"action": "create_event", "summary": "Тренировка", "start_datetime": "2025-01-17 18:00:00", "duration_minutes": 90, "description": null}}
 
 Верни только JSON:"""
@@ -180,15 +191,15 @@ class NLUService:
         # Если все модели не сработали, выбрасываем последнюю ошибку
         raise RuntimeError(f"Не удалось выполнить запрос ни к одной из моделей. Последняя ошибка: {last_error}")
     
-    async def extract_event_info(self, text: str) -> Dict[str, Any]:
+    async def extract_event_info(self, text: str) -> List[Dict[str, Any]]:
         """
-        Извлечение информации о событии из текста через Gemini с автоматическим fallback
+        Извлечение информации о событиях из текста через Gemini с автоматическим fallback
         
         Args:
             text: Транскрибированный текст
             
         Returns:
-            Словарь с информацией о событии
+            Список словарей с информацией о событиях (может содержать одно или несколько событий)
         """
         try:
             # Убеждаемся, что модель инициализирована
@@ -215,43 +226,51 @@ class NLUService:
             # Парсим JSON
             result = json.loads(result_text)
             
-            # Проверяем, что result является словарем, а не списком
+            # Нормализуем результат: всегда возвращаем список
+            events = []
             if isinstance(result, list):
-                if len(result) > 0:
-                    # Если это список, берем первый элемент
-                    result = result[0]
-                    logger.warning("Gemini вернул список вместо объекта, используется первый элемент")
-                else:
-                    # Если список пустой, создаем словарь по умолчанию
-                    result = {}
-                    logger.warning("Gemini вернул пустой список, используется словарь по умолчанию")
-            
-            # Убеждаемся, что result является словарем
-            if not isinstance(result, dict):
+                events = result
+            elif isinstance(result, dict):
+                # Если это одно событие, оборачиваем в список
+                events = [result]
+            else:
                 logger.error(f"Неожиданный тип результата: {type(result)}, значение: {result}")
                 raise ValueError("Не удалось обработать ответ от модели. Попробуйте сформулировать иначе.")
             
-            # Парсим дату и время
-            if "start_datetime" in result:
-                dt_str = result["start_datetime"]
-                # Если дата без часового пояса, добавляем его
-                try:
-                    dt = parser.parse(dt_str)
-                    if dt.tzinfo is None:
-                        dt = self.timezone.localize(dt)
-                    result["start_datetime"] = dt
-                except Exception as e:
-                    logger.error(f"Ошибка парсинга даты {dt_str}: {e}")
-                    # Используем текущее время + 1 день как fallback
-                    result["start_datetime"] = self._get_current_datetime() + timedelta(days=1)
+            # Обрабатываем каждое событие
+            processed_events = []
+            for event in events:
+                if not isinstance(event, dict):
+                    logger.warning(f"Пропущено событие неверного типа: {type(event)}")
+                    continue
+                
+                # Парсим дату и время
+                if "start_datetime" in event:
+                    dt_str = event["start_datetime"]
+                    # Если дата без часового пояса, добавляем его
+                    try:
+                        dt = parser.parse(dt_str)
+                        if dt.tzinfo is None:
+                            dt = self.timezone.localize(dt)
+                        event["start_datetime"] = dt
+                    except Exception as e:
+                        logger.error(f"Ошибка парсинга даты {dt_str}: {e}")
+                        # Используем текущее время + 1 день как fallback
+                        event["start_datetime"] = self._get_current_datetime() + timedelta(days=1)
+                
+                # Устанавливаем значения по умолчанию
+                event.setdefault("action", "create_event")
+                event.setdefault("duration_minutes", 60)
+                event.setdefault("description", None)
+                
+                processed_events.append(event)
             
-            # Устанавливаем значения по умолчанию
-            result.setdefault("action", "create_event")
-            result.setdefault("duration_minutes", 60)
-            result.setdefault("description", None)
+            if not processed_events:
+                logger.warning("Не удалось извлечь ни одного события из текста")
+                raise ValueError("Не удалось извлечь информацию о событиях. Попробуйте сформулировать иначе.")
             
-            logger.info(f"Извлечена информация о событии: {result}")
-            return result
+            logger.info(f"Извлечена информация о {len(processed_events)} событии(ях): {processed_events}")
+            return processed_events
             
         except json.JSONDecodeError as e:
             logger.error(f"Ошибка парсинга JSON от Gemini: {e}")

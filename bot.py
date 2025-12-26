@@ -230,53 +230,82 @@ async def handle_voice(message: Message):
         
         # Обрабатываем текст через NLU
         await message.answer("🤖 Анализирую запрос...")
-        event_info = await nlu_service.extract_event_info(text)
+        events_info = await nlu_service.extract_event_info(text)
         
-        # Создаем событие в календаре
-        if event_info["action"] == "create_event":
-            # Проверяем наличие учетных данных перед созданием события
-            try:
-                cal_service = await get_user_calendar_service(message.from_user.id)
-            except ValueError as e:
-                await message.answer(
-                    f"❌ {str(e)}\n\n"
-                    "Используй команду /setup для настройки учетных данных Яндекс Календаря."
-                )
-                return
-            
-            await message.answer("📅 Создаю событие в календаре...")
-            
-            event_data = cal_service.create_event(
-                summary=event_info["summary"],
-                start_datetime=event_info["start_datetime"],
-                duration_minutes=event_info.get("duration_minutes", 60),
-                description=event_info.get("description")
-            )
-            
-            # Сохраняем событие в базу данных
-            db_event_id = await create_calendar_event(
-                event_id=event_data["event_id"],
-                summary=event_data["summary"],
-                start_datetime=event_data["start"],
-                end_datetime=event_data["end"],
-                telegram_user_id=message.from_user.id,
-                description=event_info.get("description")
-            )
-            
-            # Создаем уведомления
-            from scheduler import create_notifications
-            await create_notifications(db_event_id, event_data["start"])
-            
-            start_str = event_data["start"].strftime("%d.%m.%Y в %H:%M")
+        # Проверяем наличие учетных данных перед созданием событий
+        try:
+            cal_service = await get_user_calendar_service(message.from_user.id)
+        except ValueError as e:
             await message.answer(
-                f"✅ Событие успешно создано!\n\n"
-                f"📌 {event_data['summary']}\n"
-                f"📅 {start_str}\n"
-                f"⏱ Длительность: {event_info.get('duration_minutes', 60)} минут\n\n"
-                f"Я напомню тебе за 60 и 15 минут до начала."
+                f"❌ {str(e)}\n\n"
+                "Используй команду /setup для настройки учетных данных Яндекс Календаря."
             )
-        else:
-            await message.answer(f"⚠️ Действие '{event_info['action']}' пока не поддерживается.")
+            return
+        
+        # Обрабатываем все события
+        created_events = []
+        errors = []
+        
+        for idx, event_info in enumerate(events_info):
+            if event_info["action"] == "create_event":
+                try:
+                    await message.answer(f"📅 Создаю событие {idx + 1} из {len(events_info)}...")
+                    
+                    event_data = cal_service.create_event(
+                        summary=event_info["summary"],
+                        start_datetime=event_info["start_datetime"],
+                        duration_minutes=event_info.get("duration_minutes", 60),
+                        description=event_info.get("description")
+                    )
+                    
+                    # Сохраняем событие в базу данных
+                    db_event_id = await create_calendar_event(
+                        event_id=event_data["event_id"],
+                        summary=event_data["summary"],
+                        start_datetime=event_data["start"],
+                        end_datetime=event_data["end"],
+                        telegram_user_id=message.from_user.id,
+                        description=event_info.get("description")
+                    )
+                    
+                    # Создаем уведомления
+                    from scheduler import create_notifications
+                    await create_notifications(db_event_id, event_data["start"])
+                    
+                    created_events.append({
+                        "summary": event_data["summary"],
+                        "start": event_data["start"],
+                        "duration": event_info.get("duration_minutes", 60)
+                    })
+                except Exception as e:
+                    logger.error(f"Ошибка создания события {idx + 1}: {e}")
+                    errors.append(f"Событие '{event_info.get('summary', 'Без названия')}': {str(e)}")
+            else:
+                errors.append(f"Действие '{event_info['action']}' пока не поддерживается.")
+        
+        # Формируем ответ пользователю
+        if created_events:
+            if len(created_events) == 1:
+                event = created_events[0]
+                start_str = event["start"].strftime("%d.%m.%Y в %H:%M")
+                await message.answer(
+                    f"✅ Событие успешно создано!\n\n"
+                    f"📌 {event['summary']}\n"
+                    f"📅 {start_str}\n"
+                    f"⏱ Длительность: {event['duration']} минут\n\n"
+                    f"Я напомню тебе за 60 и 15 минут до начала."
+                )
+            else:
+                response_text = f"✅ Создано событий: {len(created_events)}\n\n"
+                for i, event in enumerate(created_events, 1):
+                    start_str = event["start"].strftime("%d.%m.%Y в %H:%M")
+                    response_text += f"{i}. 📌 {event['summary']}\n   📅 {start_str}\n   ⏱ {event['duration']} минут\n\n"
+                response_text += "Я напомню тебе за 60 и 15 минут до начала каждого события."
+                await message.answer(response_text)
+        
+        if errors:
+            error_text = "❌ Ошибки при создании событий:\n\n" + "\n".join(f"• {err}" for err in errors)
+            await message.answer(error_text)
         
         # Удаляем временный файл
         try:
