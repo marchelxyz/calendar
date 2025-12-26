@@ -10,8 +10,11 @@ class Config:
     # Telegram
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     
-    # OpenAI
+    # OpenAI (для Whisper - транскрибация голоса)
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    
+    # Google Gemini (для обработки текста и извлечения данных о событиях)
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     
     # Яндекс Календарь
     YANDEX_USER = os.getenv("YANDEX_USER")
@@ -32,7 +35,8 @@ class Config:
         """Проверка наличия обязательных переменных"""
         required = [
             "TELEGRAM_BOT_TOKEN",
-            "OPENAI_API_KEY",
+            "OPENAI_API_KEY",  # Для Whisper
+            "GEMINI_API_KEY",  # Для обработки текста
             "YANDEX_USER",
             "YANDEX_PASS"
         ]
