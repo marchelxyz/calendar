@@ -21,7 +21,10 @@ class TranscriptionService:
     
     async def _get_audio_duration(self, audio_path: str) -> float:
         """
-        Получает длительность аудиофайла в секундах через ffprobe
+        Получает длительность аудиофайла в секундах через ffprobe.
+        
+        ffprobe - это утилита из пакета ffmpeg (консольная программа, не Python библиотека).
+        Если ffprobe недоступен, используется оценка на основе размера файла.
         
         Args:
             audio_path: Путь к аудиофайлу
@@ -30,6 +33,8 @@ class TranscriptionService:
             Длительность в секундах
         """
         try:
+            # ffprobe - консольная утилита из пакета ffmpeg
+            # Вызывается через subprocess, так как это не Python библиотека
             cmd = [
                 'ffprobe',
                 '-v', 'error',
@@ -69,7 +74,15 @@ class TranscriptionService:
     
     async def _split_audio_file(self, audio_path: str, start_time: float, duration: float, output_path: str) -> bool:
         """
-        Разделяет аудиофайл на часть используя ffmpeg
+        Разделяет аудиофайл на часть используя ffmpeg.
+        
+        ffmpeg - это консольная утилита (командная программа), не Python библиотека.
+        Устанавливается отдельно в операционную систему.
+        Вызывается через subprocess для работы с аудио файлами.
+        
+        Альтернативы:
+        - pydub (Python библиотека) - но она тоже требует ffmpeg под капотом
+        - Другие библиотеки - но для OGG Opus (формат Telegram) ffmpeg - стандарт
         
         Args:
             audio_path: Путь к исходному файлу
@@ -81,6 +94,8 @@ class TranscriptionService:
             True если успешно, False иначе
         """
         try:
+            # ffmpeg - консольная утилита, вызывается через subprocess
+            # Устанавливается отдельно: apt-get install ffmpeg / brew install ffmpeg
             cmd = [
                 'ffmpeg',
                 '-i', audio_path,
